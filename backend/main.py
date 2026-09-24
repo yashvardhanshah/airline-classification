@@ -7,13 +7,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from ml.preprocessing import preprocess
+from backend.db import save_prediction
 
 ARTIFACTS = Path(__file__).resolve().parent.parent / "ml" / "artifacts"
 model = joblib.load(ARTIFACTS / "random_forest.joblib")
 feature_columns = joblib.load(ARTIFACTS / "feature_columns.joblib")
 
 app = FastAPI(title="Airline Satisfaction API")
-
+MODEL_VERSION = "random_forest_v1"
 Rating = Annotated[int, Field(ge=0, le=5)]
 
 
@@ -71,13 +72,14 @@ COLUMN_NAMES = {
 
 @app.post("/predict")
 def predict(passenger: Passenger):
-    raw = pd.DataFrame([{COLUMN_NAMES[k]: v for k, v in passenger.model_dump().items()}])
+    data = passenger.model_dump()
+    raw = pd.DataFrame([{COLUMN_NAMES[k]: v for k, v in data.items()}])
     raw["Arrival Delay in Minutes"] = raw["Arrival Delay in Minutes"].astype(float)
 
     features = preprocess(raw)[feature_columns]
-    prob = float(model.predict_proba(features)[0, 1])
+    prob = round(float(model.predict_proba(features)[0, 1]), 4)
+    label = "satisfied" if prob >= 0.5 else "neutral or dissatisfied"
 
-    return {
-        "prediction": "satisfied" if prob >= 0.5 else "neutral or dissatisfied",
-        "probability_satisfied": round(prob, 4),
-    }
+    prediction_id = save_prediction(data, label, prob, MODEL_VERSION)
+
+    return {"id": prediction_id, "prediction": label, "probability_satisfied": prob}
